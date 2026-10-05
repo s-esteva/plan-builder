@@ -185,6 +185,10 @@ html.dragging,html.dragging *{cursor:grabbing!important}
 .tip.on{opacity:1}
 /* Share, under the big code */
 .codeov .share{position:absolute;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);min-width:132px}
+/* the plan's name and Back, over the big code */
+.codeov .back{position:absolute;left:calc(12px + env(safe-area-inset-left,0px));top:calc(12px + env(safe-area-inset-top,0px));height:36px;padding:0 12px;font-size:14px}
+.codeov .ovname{position:absolute;left:96px;right:96px;top:calc(12px + env(safe-area-inset-top,0px));height:36px;display:flex;align-items:center;justify-content:center;color:#0b0c10;font-size:18px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.codeov .ovname[hidden]{display:none}
 
 /* ================= C. tabs ================= */
 .v-C{--palmin:260px}
@@ -2744,9 +2748,10 @@ function removeButton(P, it) {                         // the small x that shows
 
 /* A, B, C: circles. cfg = { narrow: {tile, big?, gap, pad}, wide: {...} }.
    o.strip: a layout function; when given, the narrow (phone) layout is one row that scrolls sideways. */
-/* The sequence circles carry no label: resting the pointer on one for a second names it (Sebastian, 2026-10-04).
+/* The sequence circles carry no label: resting the pointer on one for half a second names it (Sebastian, 2026-10-04:
+   at a second it felt slow).
    Mouse and pen only, since a finger can't hover. It goes the moment the pointer leaves, presses, or the page scrolls. */
-const TIP_MS = 1000;
+const TIP_MS = 500;
 let TIP = null, TIP_TIMER = 0;
 function tipHide() { clearTimeout(TIP_TIMER); TIP_TIMER = 0; if (TIP) TIP.classList.remove('on'); }
 function tipShow(target, text) {
@@ -2789,7 +2794,7 @@ function flowView(cfg, o) {
     targetEl(it) { return it.el; },
     mkTile(P, it) {
       const t = this.mkGhost(P, it.beat);
-      tipFor(t, it.beat.path.split('/').join(' \u203A '));            // the circle carries no label: a second's hover names it
+      tipFor(t, it.beat.path.split('/').join(' \u203A '));            // the circle carries no label: a short hover names it
       t.setAttribute('aria-label', it.beat.cat.label + ', ' + it.beat.label);
       if (it.pending) t.classList.add('pending');
       t.append(removeButton(P, it));
@@ -2888,6 +2893,11 @@ class Page {
     // Show code: big black-on-white code, tap anywhere to close
     this.overlay = el('div', 'codeov'); this.overlay.setAttribute('aria-label', 'Code');
     this.ovCanvas = el('canvas'); this.overlay.append(this.ovCanvas);
+    // the plan's name over the code, and a small Back (Sebastian, 2026-10-04); a tap anywhere else still closes it
+    this.ovName = el('div', 'ovname'); this.overlay.append(this.ovName);
+    this.backBtn = el('button', 'btn back', '\u2039 Back'); this.backBtn.type = 'button';
+    this.backBtn.addEventListener('click', e => { e.stopPropagation(); this.closeCode(); });
+    this.overlay.append(this.backBtn);
     // Share (Sebastian, 2026-10-04): the plan as a link that reopens it, through the phone's share sheet, or copied
     this.shareBtn = el('button', 'btn share', 'Share'); this.shareBtn.type = 'button';
     this.shareBtn.addEventListener('click', e => { e.stopPropagation(); sharePlan(this, this.shareBtn); });
@@ -3105,8 +3115,10 @@ class Page {
   }
   closeCode() { this.overlay.classList.remove('on'); keepAwake(false); }
   paintOverlay() {
-    // the Share button sits under the code, so the code never runs beneath it
-    const s = Math.floor(Math.min(this.root.clientWidth, this.root.clientHeight - SHARE_ROOM));
+    // the name and Back sit above the code and Share under it, so the code never runs beneath them
+    const name = this.name.trim();
+    this.ovName.textContent = name; this.ovName.hidden = !name;
+    const s = Math.floor(Math.min(this.root.clientWidth, this.root.clientHeight - SHARE_ROOM - TOP_ROOM));
     if (s) paintQR(this.ovCanvas, makeQR(this.name, this.beats), s, true);
   }
 }
@@ -3386,7 +3398,7 @@ const LinkSync = {
 
 /* Share, on the code view: a link that opens this page on this plan. The phone's share sheet where there is one
    (Messages, mail, AirDrop…); otherwise the link is copied. Nothing leaves the device but what the guide shares. */
-const SHARE_ROOM = 76;
+const SHARE_ROOM = 76, TOP_ROOM = 64;                // room for Share below the big code, and the name and Back above it
 function shareLink(P) { return location.href.split('#')[0] + '#p=' + encodeURIComponent(P.payload()); }
 async function sharePlan(P, btn) {
   const url = shareLink(P), name = P.name.trim();
