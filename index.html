@@ -2562,7 +2562,17 @@ const BEATS = RBV.beats.map((b, i) => ({
 }));
 const BY_ID = new Map(BEATS.map(b => [b.id, b]));
 const BY_CAT = new Map(CATS.map(c => [c.id, BEATS.filter(b => b.cat === c)]));
-const EXAMPLE = { name: RBV.example.name, beats: RBV.example.ids.map(id => BY_ID.get(id)).filter(Boolean) };
+const EXAMPLE = { name: RBV.example.name, beats: RBV.example.ids.map(id => BY_ID.get(id)).filter(Boolean) };   // the self-check's fixed plan
+// Shuffle, in place of Example (Sebastian, 2026-10-05): 5 to 40 tiles at random, never the same tile twice in a row
+const SHUFFLE_MIN = 5, SHUFFLE_MAX = 40;
+function randomBeats() {
+  const n = SHUFFLE_MIN + Math.floor(Math.random() * (SHUFFLE_MAX - SHUFFLE_MIN + 1)), out = [];
+  while (out.length < n) {
+    const b = BEATS[Math.floor(Math.random() * BEATS.length)];
+    if (BEATS.length < 2 || b !== out[out.length - 1]) out.push(b);
+  }
+  return out;
+}
 
 /* ---------- helpers ---------- */
 const EASE = 'cubic-bezier(.3,.7,.3,1)';          // slide: beats moving, the gap opening, panels resizing (0.45 s)
@@ -2823,8 +2833,8 @@ function removeButton(P, it) {                         // the small x that shows
    Hover is mouse and pen only, since a finger can't hover. It goes the moment the pointer leaves, presses, or the page
    scrolls. A finger gets the palette's bubble for a moment after a tap adds the beat (tipFlash). */
 const TIP_MS = 500, TIP_DESC_MS = 350, TIP_FLASH_MS = 2200;   // a description comes a little sooner (Sebastian, 2026-10-04)
-let TIP = null, TIP_TIMER = 0, TIP_FOLLOW = 0;
-function tipHide() { clearTimeout(TIP_TIMER); TIP_TIMER = 0; cancelAnimationFrame(TIP_FOLLOW); TIP_FOLLOW = 0; if (TIP) TIP.classList.remove('on'); }
+let TIP = null, TIP_TIMER = 0, TIP_FOLLOW = 0, TIP_FLASH = false;
+function tipHide() { TIP_FLASH = false; clearTimeout(TIP_TIMER); TIP_TIMER = 0; cancelAnimationFrame(TIP_FOLLOW); TIP_FOLLOW = 0; if (TIP) TIP.classList.remove('on'); }
 function tipPlace(target) {                          // centred over the target (under it near the top), kept inside the window
   const r = target.getBoundingClientRect(), half = TIP.offsetWidth / 2, m = 8;
   const x = Math.min(Math.max(r.left + r.width / 2, half + m), innerWidth - half - m);
@@ -2845,6 +2855,7 @@ function tipFlash(target, text, ms) {
   if (!text) return;
   tipHide();
   tipShow(target, text);
+  TIP_FLASH = true;
   TIP_TIMER = setTimeout(tipHide, ms || TIP_FLASH_MS);       // a timer, not the frame loop: frames stop in a hidden tab
   (function follow() {
     if (!target.isConnected) { tipHide(); return; }
@@ -2862,7 +2873,9 @@ function tipFor(t, text, anchor, ms) {               // anchor: where the bubble
   t.addEventListener('pointerdown', tipHide);
 }
 addEventListener('pointerdown', tipHide, true);
-addEventListener('scroll', tipHide, true);
+// A tap's bubble rides out a scroll (Sebastian, 2026-10-05): a new row in the sequence shrinks the palette, which scrolls
+// it, and that closed the bubble at once. It follows its circle anyway; the next touch still closes it.
+addEventListener('scroll', () => { if (!TIP_FLASH) tipHide(); }, true);
 
 function flowView(cfg, o) {
   o = o || {};
@@ -2936,7 +2949,7 @@ class Page {
     const g = this.grid = el('div', 'pgrid v-' + this.key); root.append(g);
     const rcol = el('div', 'rcol');
 
-    // name, Example, Clear
+    // name, Shuffle, Clear
     const head = el('div', 'head');
     const nameBox = el('label', 'name', '<span>Name</span>');
     const inp = this.input = el('input');
@@ -2946,11 +2959,11 @@ class Page {
     inp.addEventListener('input', () => this.onNameInput());
     inp.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === 'Escape') inp.blur(); });
     nameBox.append(inp);
-    this.exBtn = el('button', 'txtbtn', 'Example'); this.exBtn.type = 'button';
+    this.shufBtn = el('button', 'txtbtn', 'Shuffle'); this.shufBtn.type = 'button';
     this.clBtn = el('button', 'txtbtn danger', 'Clear'); this.clBtn.type = 'button';
-    this.exBtn.addEventListener('click', () => this.loadExample(this.exBtn));
+    this.shufBtn.addEventListener('click', () => this.shuffle(this.shufBtn));
     this.clBtn.addEventListener('click', () => this.clear());
-    head.append(nameBox, this.exBtn, this.clBtn);
+    head.append(nameBox, this.shufBtn, this.clBtn);
 
     // the sequence: panel > scroller > content (tiles are placed absolutely inside content)
     const seq = this.seq = el('div', 'seq');
@@ -3163,6 +3176,26 @@ class Page {
     this.items.splice(i, 1); it.dead = true; this.dropEl(it);
     this.relayout(); this.changed();
   }
+  // A finger's tap on a tile in the sequence takes it out (Sebastian, 2026-10-05): it flies back to its circle in the
+  // palette, or just fades when the palette isn't showing that circle right now.
+  sendBack(it) {
+    if (this.items.indexOf(it) < 0) return;
+    const home = it.el && !REDUCED && this.pal.querySelector('.cell[data-beat="' + it.beat.id + '"] .c');
+    const view = home && home.closest('.gridwrap'), hr = home && home.getBoundingClientRect(), vr = view && view.getBoundingClientRect();
+    if (!hr || !hr.width || !vr || hr.top < vr.top || hr.bottom > vr.bottom) { this.removeItem(it); return; }
+    const rr = this.root.getBoundingClientRect(), tr = it.el.getBoundingClientRect();
+    const a = { x: tr.left + tr.width / 2 - rr.left, y: tr.top + tr.height / 2 - rr.top, s: tr.width };
+    const f = circle(it.beat); f.classList.add('flyer'); f.style.width = f.style.height = a.s + 'px';
+    f.style.transform = 'translate(' + (a.x - a.s / 2) + 'px,' + (a.y - a.s / 2) + 'px)';
+    this.root.append(f);
+    this.items.splice(this.items.indexOf(it), 1); it.dead = true;
+    it.el.remove(); it.el = null;
+    this.relayout(); this.changed();
+    glide(f, a, () => {                                                // the palette moves up as the sequence shrinks: aim where the circle is now
+      const r = home.getBoundingClientRect();
+      return { x: r.left + r.width / 2 - rr.left, y: r.top + r.height / 2 - rr.top, s: r.width };
+    }, GLIDE_MS).then(() => f.remove());
+  }
   clear() {
     if (!this.items.length) return;
     if (this.made) { this.made = false; this.nth++; this.input.placeholder = this.title; }
@@ -3177,7 +3210,7 @@ class Page {
     this.setName(plan.name);
     this.afterAdd(this.items.slice(), o.origin, { instant: o.instant, reset: true, stagger: Math.min(80, 900 / Math.max(1, this.items.length)) });
   }
-  loadExample(origin) { this.setPlan(EXAMPLE, { origin }); }
+  shuffle(origin) { this.setPlan({ name: this.name, beats: randomBeats() }, { origin }); }   // a new random sequence; the name stays
 
   /* ----- name ----- */
   onNameInput() {
@@ -3350,7 +3383,7 @@ function tick() {
 function finish(d, cancelled) {
   const P = d.P;
   DRAG = null; clearTimeout(d.timer);
-  if (!d.lifted) return;
+  if (!d.lifted) { if (!cancelled && d.kind === 'tile' && d.touch) P.sendBack(d.item); return; }   // a finger's tap on a tile: back it goes
   document.documentElement.classList.remove('dragging');
   try { d.src.releasePointerCapture(d.pid); } catch (e) { /* already released */ }
   P.noClickUntil = performance.now() + 400;
@@ -3424,7 +3457,7 @@ addEventListener('touchmove', e => { if (DRAG && DRAG.lifted && e.cancelable) e.
 // a palette circle with its label under it: tap or click adds, drag places. Its bubble says what the beat does: on
 // hover, or for a moment after a finger's tap.
 function mkCell(P, beat) {
-  const b = el('button', 'cell'); b.type = 'button';
+  const b = el('button', 'cell'); b.type = 'button'; b.dataset.beat = beat.id;   // a tile tapped out of the sequence flies back here
   b.setAttribute('aria-label', beat.cat.label + ', ' + beat.label + ' tile');
   if (beat.desc) b.setAttribute('aria-description', beat.desc);
   const c = circle(beat), l = el('span', 'lbl'); l.textContent = beat.label;
